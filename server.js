@@ -14,6 +14,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // In-memory state
 let monitors = [];
+let groupOrder = [];           // 自訂的群組順序
 let lastGlobalCheck = null;
 let isChecking = false;
 
@@ -41,6 +42,7 @@ function loadFromFile() {
           notes: m.notes || ''
         }));
         lastGlobalCheck = data.lastGlobalCheck || null;
+        groupOrder = Array.isArray(data.groupOrder) ? data.groupOrder : [];
         console.log(`Loaded ${monitors.length} monitors from ${DATA_FILE}`);
         return;
       }
@@ -51,6 +53,7 @@ function loadFromFile() {
 
   // No seed data — start completely empty for open-source safety
   monitors = [];
+  groupOrder = [];
   lastGlobalCheck = null;
   console.log('No monitor data found. Starting with an empty list.');
 }
@@ -61,6 +64,7 @@ function saveToFile() {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const payload = {
       monitors,
+      groupOrder,
       lastGlobalCheck,
       savedAt: new Date().toISOString()
     };
@@ -130,25 +134,43 @@ async function runAllChecks(isManual = false) {
   console.log('Checks completed.');
 }
 
-// 取得目前所有使用的群組（動態）
-// 「伺服器」永遠排第一，其餘依中文排序
+// 取得目前所有使用的群組（支援自訂順序）
 function getAllGroups() {
   const groupSet = new Set(monitors.map(m => m.group || 'server'));
-  const groups = Array.from(groupSet);
+  let groups = Array.from(groupSet);
 
-  // 把 "server" 移到最前面
-  const serverIndex = groups.indexOf('server');
-  if (serverIndex > -1) {
-    groups.splice(serverIndex, 1);
-    groups.unshift('server');
+  if (groupOrder.length > 0) {
+    // 使用自訂順序
+    const ordered = [];
+    const remaining = new Set(groups);
+
+    // 先按照 groupOrder 排列已存在的群組
+    groupOrder.forEach(g => {
+      if (remaining.has(g)) {
+        ordered.push(g);
+        remaining.delete(g);
+      }
+    });
+
+    // 剩下的群組（新建立的）按中文排序補在後面
+    const rest = Array.from(remaining).sort((a, b) => 
+      (a || '').localeCompare(b || '', 'zh-Hant')
+    );
+
+    groups = [...ordered, ...rest];
+  } else {
+    // 預設行為：server 第一，其餘中文排序
+    const serverIndex = groups.indexOf('server');
+    if (serverIndex > -1) {
+      groups.splice(serverIndex, 1);
+      groups.unshift('server');
+    }
+    groups.sort((a, b) => {
+      if (a === 'server') return -1;
+      if (b === 'server') return 1;
+      return (a || '').localeCompare(b || '', 'zh-Hant');
+    });
   }
-
-  // 其餘群組依中文排序
-  groups.sort((a, b) => {
-    if (a === 'server') return -1;
-    if (b === 'server') return 1;
-    return (a || '').localeCompare(b || '', 'zh-Hant');
-  });
 
   return groups;
 }
@@ -289,6 +311,37 @@ app.delete('/api/monitors/:id', (req, res) => {
   monitors.splice(idx, 1);
   saveToFile();
   res.json({ success: true });
+});
+
+// === 群組順序管理 ===
+
+// 取得目前群組順序
+app.get('/api/groups/order', (req, res) => {
+  res.json({ order: groupOrder });
+});
+
+// 更新群組順序
+app.put('/api/groups/order', (req, res) => {
+  const { order } = req.body;
+
+  if (!Array.isArray(order)) {
+    return res.status(400).json({ error: 'order 必須是陣列' });
+  }
+
+  // 只保留目前實際存在的群組
+  const existingGroups = new Set(monitors.map(m => m.group || 'server'));
+  groupOrder = order.filter(g => existingGroups.has(g));
+
+  // 把新出現但不在 order 裡的群組補上去（放在最後）
+  monitors.forEach(m => {
+    const g = m.group || 'server';
+    if (!groupOrder.includes(g)) {
+      groupOrder.push(g);
+    }
+  });
+
+  saveToFile();
+  res.json({ success: true, order: groupOrder });
 });
 
 // Force check single monitor

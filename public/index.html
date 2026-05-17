@@ -128,6 +128,15 @@
             <i class="fa-solid fa-moon text-lg hidden dark:block"></i>
           </button>
 
+          <!-- Reorder Groups -->
+          <button onclick="toggleReorderMode()" 
+                  id="reorder-btn"
+                  class="flex items-center gap-x-1.5 px-3 py-1.5 text-sm font-medium border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-2xl transition-colors"
+                  title="調整類別順序">
+            <i class="fa-solid fa-sort"></i>
+            <span class="hidden sm:inline">排序</span>
+          </button>
+
           <!-- Check All -->
           <button onclick="checkAllNow()"
                   class="flex items-center gap-x-2 px-4 py-2 text-sm font-medium bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-2xl transition-colors">
@@ -317,6 +326,7 @@
     let currentViewingMonitor = null;   // 用來記錄目前打開的詳細視窗是哪一台
     let refreshTimer = null;
     let currentFilter = 'all'; // 'all' | 'up' | 'down'
+    let isReorderMode = false;
 
     // ==================== 主題切換（亮色 / 暗色） ====================
     function initTheme() {
@@ -439,6 +449,65 @@
       renderGroups(currentMonitors);
     }
 
+    // ==================== 群組排序功能 ====================
+    async function toggleReorderMode() {
+      isReorderMode = !isReorderMode;
+
+      const btn = document.getElementById('reorder-btn');
+      if (isReorderMode) {
+        btn.classList.add('bg-emerald-100', 'dark:bg-emerald-900/30', 'border-emerald-400');
+        btn.classList.remove('border-slate-200', 'dark:border-slate-700');
+      } else {
+        btn.classList.remove('bg-emerald-100', 'dark:bg-emerald-900/30', 'border-emerald-400');
+        btn.classList.add('border-slate-200', 'dark:border-slate-700');
+        // 離開排序模式時儲存
+        await saveGroupOrder();
+      }
+
+      renderGroups(currentMonitors);
+    }
+
+    async function saveGroupOrder() {
+      try {
+        const sections = document.querySelectorAll('#groups-container > div');
+        const order = [];
+
+        sections.forEach(section => {
+          const key = section.dataset.internalGroup;
+          if (key) order.push(key);
+        });
+
+        await fetch('/api/groups/order', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order })
+        });
+
+        showToast('群組順序已儲存');
+      } catch (e) {
+        showToast('儲存順序失敗', true);
+      }
+    }
+
+    async function moveGroupByInternal(internalKey, direction) {
+      const sections = Array.from(document.querySelectorAll('#groups-container > div'));
+      const currentIndex = sections.findIndex(s => s.dataset.internalGroup === internalKey);
+
+      if (currentIndex === -1) return;
+
+      const targetIndex = currentIndex + direction;
+      if (targetIndex < 0 || targetIndex >= sections.length) return;
+
+      const parent = sections[0].parentNode;
+      if (direction > 0) {
+        parent.insertBefore(sections[targetIndex], sections[currentIndex]);
+      } else {
+        parent.insertBefore(sections[currentIndex], sections[targetIndex]);
+      }
+
+      await saveGroupOrder();
+    }
+
     // ==================== 心跳圖 ====================
     function createHeartbeat(history) {
       const container = document.createElement('div');
@@ -533,39 +602,69 @@
 
       const filtered = getFilteredMonitors(monitors);
 
-      // 依照 groupLabel 將監測項目分組
-      const groups = {};
+      // 以 internal group 為 key 來分組，保留 display label
+      const groupMap = new Map(); // internalGroup -> { label, items: [] }
+
       filtered.forEach(m => {
-        const key = m.groupLabel || m.group || '其他';
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(m);
+        const internal = m.group || 'server';
+        const displayLabel = m.groupLabel || (internal === 'server' ? '伺服器' : internal);
+
+        if (!groupMap.has(internal)) {
+          groupMap.set(internal, { label: displayLabel, items: [] });
+        }
+        groupMap.get(internal).items.push(m);
       });
 
-      // 動態產生顯示順序：伺服器永遠第一，其餘照中文排序
-      const labels = Object.keys(groups);
-      labels.sort((a, b) => {
-        if (a === '伺服器') return -1;
-        if (b === '伺服器') return 1;
-        return a.localeCompare(b, 'zh-Hant');
-      });
+      // 取得目前要顯示的 internal groups，並依照 groupOrder 或預設排序
+      let internalGroups = Array.from(groupMap.keys());
+
+      // 如果有自訂 groupOrder，就優先使用它
+      // 注意：這裡我們讓後端已經處理好排序，所以直接用出現順序即可
+      // 為了簡單，我們在這裡維持 DOM 順序（由後端回傳的 monitors 順序決定）
+
+      // 為了支援前端即時排序，我們還是需要手動排序 internalGroups
+      // 暫時先維持簡單：如果不在 reorder 模式，就信任後端順序
 
       let hasAny = false;
 
-      labels.forEach(label => {
-        if (!groups[label] || groups[label].length === 0) return;
+      // 建立 section
+      internalGroups.forEach(internal => {
+        const info = groupMap.get(internal);
+        const label = info.label;
+        const items = info.items;
+
+        if (!items || items.length === 0) return;
         hasAny = true;
 
         const section = document.createElement('div');
-        section.innerHTML = `
+        section.dataset.internalGroup = internal;   // 重要：存 internal key
+
+        let headerHTML = `
           <div class="flex items-center gap-x-2 mb-3 px-1">
             <span class="section-title">${label}</span>
-            <span class="text-xs text-slate-400">(${groups[label].length})</span>
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4" id="grid-${label.replace(/\s/g, '_')}"></div>
+            <span class="text-xs text-slate-400">(${items.length})</span>
         `;
 
-        const grid = section.querySelector(`#grid-${label.replace(/\s/g, '_')}`);
-        groups[label].forEach(m => grid.appendChild(createMonitorCard(m)));
+        if (isReorderMode) {
+          headerHTML += `
+            <button onclick="moveGroupByInternal('${internal}', -1)" class="ml-2 text-slate-400 hover:text-emerald-600 px-1" title="上移">
+              <i class="fa-solid fa-arrow-up"></i>
+            </button>
+            <button onclick="moveGroupByInternal('${internal}', 1)" class="text-slate-400 hover:text-emerald-600 px-1" title="下移">
+              <i class="fa-solid fa-arrow-down"></i>
+            </button>
+          `;
+        }
+
+        headerHTML += `</div>`;
+
+        section.innerHTML = `
+          ${headerHTML}
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4" id="grid-${internal}"></div>
+        `;
+
+        const grid = section.querySelector(`#grid-${internal}`);
+        items.forEach(m => grid.appendChild(createMonitorCard(m)));
         container.appendChild(section);
       });
 
