@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>主機監測系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2310b981' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='2' width='20' height='6' rx='1.5'/%3E%3Crect x='2' y='10' width='20' height='6' rx='1.5'/%3E%3Crect x='2' y='18' width='20' height='4' rx='1.5'/%3E%3Ccircle cx='6' cy='5' r='1' fill='%2310b981'/%3E%3Ccircle cx='6' cy='13' r='1' fill='%2310b981'/%3E%3C/svg%3E" type="image/svg+xml">
+
+  <script>
+    // Tailwind dark mode 設定（必須在 body 之前執行）
+    tailwind.config = {
+      darkMode: 'class'
+    };
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Inter:wght@400;500;600&amp;display=swap');
+
+    :root {
+      --font-sans: 'Noto Sans TC', 'Inter', system-ui, sans-serif;
+    }
+
+    body {
+      font-family: var(--font-sans);
+    }
+
+    .monitor-card {
+      transition: all 0.2s cubic-bezier(0.4, 0.0, 0.2, 1);
+    }
+    .monitor-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+    }
+
+    .status-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 9999px;
+      display: inline-block;
+      box-shadow: 0 0 0 3px rgba(255,255,255,0.9);
+    }
+    .dark .status-dot {
+      box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.9);
+    }
+
+    .status-up { background-color: #10b981; }
+    .status-down { background-color: #ef4444; }
+    .status-unknown { background-color: #94a3b8; }
+
+    .heartbeat {
+      display: flex;
+      gap: 2.5px;
+      align-items: center;
+      height: 18px;
+    }
+    .hb-dot {
+      width: 5.5px;
+      height: 14px;
+      border-radius: 1px;
+      transition: transform 0.1s ease;
+    }
+    .hb-dot.up { background-color: #10b981; }
+    .hb-dot.down { background-color: #ef4444; }
+    .hb-dot.pending { background-color: #cbd5e1; }
+    .dark .hb-dot.pending { background-color: #475569; }
+
+    .section-title {
+      font-size: 13px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: #64748b;
+    }
+    .dark .section-title {
+      color: #64748b;
+    }
+
+    .ip-text {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    .stat-value {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+
+    .modal {
+      animation: modalEnter 0.2s ease-out;
+    }
+    @keyframes modalEnter {
+      from { opacity: 0; transform: translateY(10px) scale(0.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .nav-link {
+      transition: all 0.1s ease;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-700 dark:bg-slate-950 dark:text-slate-200">
+
+  <!-- Top Navigation -->
+  <nav class="bg-white border-b border-slate-200 dark:bg-slate-900 dark:border-slate-800 sticky top-0 z-50">
+    <div class="max-w-screen-2xl mx-auto px-6">
+      <div class="flex items-center justify-between h-16">
+        <!-- Logo + Title -->
+        <div class="flex items-center gap-x-3">
+          <div class="flex items-center justify-center w-9 h-9 bg-emerald-600 text-white rounded-2xl">
+            <i class="fa-solid fa-server text-lg"></i>
+          </div>
+          <div>
+            <div class="font-semibold text-2xl tracking-tight text-slate-800 dark:text-white">主機監測系統</div>
+            <div class="text-[10px] text-slate-400 -mt-1 font-medium">INTERNAL MONITOR</div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center gap-x-2">
+          <!-- Theme Toggle -->
+          <button onclick="toggleTheme()" 
+                  class="w-9 h-9 flex items-center justify-center text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-2xl transition-colors"
+                  title="切換明暗主題">
+            <i class="fa-solid fa-sun text-lg dark:hidden"></i>
+            <i class="fa-solid fa-moon text-lg hidden dark:block"></i>
+          </button>
+
+          <!-- Check All -->
+          <button onclick="checkAllNow()"
+                  class="flex items-center gap-x-2 px-4 py-2 text-sm font-medium bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-2xl transition-colors">
+            <i class="fa-solid fa-sync-alt"></i>
+            <span class="hidden sm:inline">立即檢查</span>
+          </button>
+
+          <!-- Add Button -->
+          <button onclick="showAddModal()"
+                  class="flex items-center gap-x-2 px-4 py-2 text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-2xl shadow-sm transition-all">
+            <i class="fa-solid fa-plus"></i>
+            <span>新增主機</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-screen-2xl mx-auto px-6 pt-6 pb-10">
+
+    <!-- Global Stats -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-4" id="global-stats">
+      <!-- Populated by JS -->
+    </div>
+
+    <!-- Last check info -->
+    <div class="flex items-center gap-x-2 mt-5 mb-6 text-sm text-slate-500 dark:text-slate-400">
+      <i class="fa-regular fa-clock"></i>
+      <span id="last-check-time">等待首次檢查...</span>
+      <span class="text-slate-300 dark:text-slate-700">·</span>
+      <span class="text-xs">每 30 秒自動檢查</span>
+    </div>
+
+    <!-- Groups Container -->
+    <div id="groups-container" class="space-y-10">
+      <!-- Dynamically rendered by JS -->
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="hidden py-16">
+      <div class="max-w-md mx-auto text-center">
+        <div class="mx-auto w-16 h-16 bg-slate-100 dark:bg-slate-900 rounded-3xl flex items-center justify-center mb-5">
+          <i class="fa-solid fa-server text-4xl text-slate-300 dark:text-slate-600"></i>
+        </div>
+        <h3 class="text-xl font-semibold text-slate-700 dark:text-slate-200 mb-2">目前還沒有監測目標</h3>
+        <p class="text-slate-500 dark:text-slate-400 mb-6">
+          點擊右上角的「新增主機」按鈕，開始監測你的伺服器、NAS 或其他設備。
+        </p>
+        <button onclick="showAddModal()"
+                class="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-2xl inline-flex items-center gap-x-2 transition-colors">
+          <i class="fa-solid fa-plus"></i>
+          <span>新增第一台主機</span>
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-200 dark:border-slate-800 mt-10 py-6">
+    <div class="max-w-screen-2xl mx-auto px-6 text-center text-sm text-slate-400 dark:text-slate-500">
+      Made by 
+      <a href="https://kageryo.coderyo.com" target="_blank" rel="noopener noreferrer" 
+         class="font-medium text-slate-500 hover:text-emerald-600 dark:text-slate-400 dark:hover:text-emerald-400 transition-colors">
+        Chien-Hsun Chang
+      </a> 
+      With <span class="text-rose-500">♥</span>, MIT License
+    </div>
+  </footer>
+
+  <!-- Detail Modal -->
+  <div id="detail-modal" onclick="if (event.target.id === 'detail-modal') hideDetailModal()" 
+       class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+    <div onclick="event.stopImmediatePropagation()" 
+         class="modal w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl shadow-xl overflow-hidden">
+      
+      <div class="p-6">
+        <div class="flex justify-between items-start">
+          <div>
+            <div id="modal-name" class="font-semibold text-2xl text-slate-800 dark:text-white"></div>
+            <div id="modal-ip" class="ip-text text-emerald-600 dark:text-emerald-400 mt-0.5"></div>
+          </div>
+          <div id="modal-status-badge"></div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4 mt-6">
+          <div>
+            <div class="text-xs text-slate-400">回應時間</div>
+            <div id="modal-rtt" class="text-3xl font-semibold text-slate-800 dark:text-white mt-1 tabular-nums">--</div>
+            <div class="text-xs text-slate-400">毫秒</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400">可用率</div>
+            <div id="modal-uptime" class="text-3xl font-semibold text-emerald-600 dark:text-emerald-400 mt-1">--</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400">最後檢查</div>
+            <div id="modal-last" class="text-sm mt-2 font-medium text-slate-600 dark:text-slate-300">--</div>
+          </div>
+        </div>
+
+        <div id="modal-notes" class="hidden mt-3 text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-2"></div>
+      </div>
+
+      <div class="border-t border-slate-100 dark:border-slate-800 px-6 py-4 bg-slate-50 dark:bg-slate-950/60">
+        <div class="text-xs text-slate-400 mb-2">最近檢查紀錄</div>
+        <div id="modal-heartbeat" class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl p-3 min-h-[38px]"></div>
+        <div id="modal-history-count" class="text-xs text-slate-400 mt-2"></div>
+      </div>
+
+      <div class="border-t border-slate-100 dark:border-slate-800 p-4 flex gap-2 bg-white dark:bg-slate-900">
+        <button onclick="checkSingleFromModal()" 
+                class="flex-1 py-2.5 text-sm font-medium border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl transition-colors">
+          <i class="fa-solid fa-sync mr-1.5"></i> 立即檢查
+        </button>
+        <button onclick="editFromModal()" 
+                class="flex-1 py-2.5 text-sm font-medium border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl transition-colors">
+          <i class="fa-solid fa-edit mr-1.5"></i> 編輯
+        </button>
+        <button onclick="deleteFromModal()" 
+                class="px-4 py-2.5 text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-2xl transition-colors">
+          <i class="fa-solid fa-trash"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add / Edit Modal -->
+  <div id="form-modal" onclick="if (event.target.id === 'form-modal') hideFormModal()" 
+       class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+    <div onclick="event.stopImmediatePropagation()" 
+         class="modal w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl shadow-xl">
+      
+      <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+        <div id="form-title" class="font-semibold text-xl">新增監測主機</div>
+      </div>
+
+      <div class="p-6 space-y-5">
+        <div>
+          <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">IP 位址</label>
+          <input id="form-ip" type="text" placeholder="140.123.105.xxx"
+                 class="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">顯示名稱</label>
+          <input id="form-name" type="text" placeholder="例如：主機-171 或 辦公室 NAS"
+                 class="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">類別</label>
+          <input id="form-group" type="text" list="group-list" placeholder="伺服器 或 自訂類別（如：會議室設備）"
+                 class="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
+          <datalist id="group-list">
+            <!-- 由 JS 動態插入現有類別 -->
+          </datalist>
+          <div class="text-xs text-slate-400 mt-1">可直接輸入新類別名稱，系統會自動建立</div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">備註</label>
+          <textarea id="form-notes" rows="2" placeholder="例如：機房 1F-A 區 / 由張先生負責維護"
+                    class="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500 resize-y"></textarea>
+        </div>
+      </div>
+
+      <div class="px-6 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 flex gap-3 rounded-b-3xl">
+        <button onclick="hideFormModal()" 
+                class="flex-1 py-2.5 text-sm font-medium border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-900 rounded-2xl">取消</button>
+        <button onclick="submitFormModal()" id="form-submit-btn"
+                class="flex-1 py-2.5 text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl">新增主機</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed bottom-5 right-5 px-5 py-3 bg-slate-800 dark:bg-slate-700 text-white text-sm rounded-2xl shadow-xl flex items-center gap-x-3 z-[200]">
+    <span id="toast-text"></span>
+  </div>
+
+  <script>
+    // ==================== 設定 ====================
+    const API_BASE = '/api';
+    let currentMonitors = [];
+    let currentModalId = null;
+    let currentViewingMonitor = null;   // 用來記錄目前打開的詳細視窗是哪一台
+    let refreshTimer = null;
+    let currentFilter = 'all'; // 'all' | 'up' | 'down'
+
+    // ==================== 主題切換（亮色 / 暗色） ====================
+    function initTheme() {
+      const saved = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+      let shouldBeDark;
+
+      if (saved === 'dark') {
+        shouldBeDark = true;
+      } else if (saved === 'light') {
+        shouldBeDark = false;
+      } else {
+        // 第一次使用，遵循系統設定
+        shouldBeDark = prefersDark;
+      }
+
+      if (shouldBeDark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+
+      // 如果使用者沒有手動選擇過，則跟隨系統變化
+      if (!saved) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+          if (!localStorage.getItem('theme')) {
+            document.documentElement.classList.toggle('dark', e.matches);
+          }
+        });
+      }
+    }
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      const isNowDark = html.classList.toggle('dark');
+
+      // 明確儲存使用者選擇
+      localStorage.setItem('theme', isNowDark ? 'dark' : 'light');
+    }
+
+    // ==================== 工具函式 ====================
+    function formatTimeAgo(iso) {
+      if (!iso) return '未檢查';
+      const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (sec < 8) return '剛剛';
+      if (sec < 60) return `${sec} 秒前`;
+      if (sec < 3600) return `${Math.floor(sec/60)} 分鐘前`;
+      return new Date(iso).toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit'});
+    }
+
+    function formatDateTime(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleString('zh-TW', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+    }
+
+    function getUptime(m) {
+      if (!m.totalChecks || m.totalChecks === 0) return 100;
+      return Math.round((m.upChecks / m.totalChecks) * 1000) / 10;
+    }
+
+    function showToast(message, error = false) {
+      const toast = document.getElementById('toast');
+      const text = document.getElementById('toast-text');
+      text.textContent = message;
+      toast.style.background = error ? '#450a0a' : '#1e2937';
+      toast.style.display = 'flex';
+      setTimeout(() => {
+        toast.style.transition = 'all .18s';
+        toast.style.opacity = '0';
+        setTimeout(() => {
+          toast.style.display = 'none';
+          toast.style.opacity = '1';
+          toast.style.transition = '';
+        }, 160);
+      }, 2300);
+    }
+
+    // ==================== 渲染全域統計（可點擊篩選） ====================
+    function renderGlobalStats(stats) {
+      const el = document.getElementById('global-stats');
+
+      const isActive = (f) => currentFilter === f 
+        ? 'ring-2 ring-emerald-500 dark:ring-emerald-400' 
+        : 'hover:ring-1 hover:ring-slate-300 dark:hover:ring-slate-600';
+
+      el.innerHTML = `
+        <div onclick="setFilter('all')" 
+             class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl p-4 cursor-pointer transition-all ${isActive('all')}">
+          <div class="text-xs text-slate-400">總監測數</div>
+          <div class="text-4xl font-semibold text-slate-800 dark:text-white mt-1 tabular-nums">${stats.total || 0}</div>
+        </div>
+        <div onclick="setFilter('up')" 
+             class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl p-4 cursor-pointer transition-all ${isActive('up')}">
+          <div class="text-xs text-emerald-600">目前上線</div>
+          <div class="text-4xl font-semibold text-emerald-600 mt-1 tabular-nums">${stats.up || 0}</div>
+        </div>
+        <div onclick="setFilter('down')" 
+             class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl p-4 cursor-pointer transition-all ${isActive('down')}">
+          <div class="text-xs text-rose-600">目前離線</div>
+          <div class="text-4xl font-semibold text-rose-600 mt-1 tabular-nums">${stats.down || 0}</div>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl p-4 col-span-2 sm:col-span-1">
+          <div class="text-xs text-slate-400">平均可用率</div>
+          <div class="text-4xl font-semibold text-slate-800 dark:text-white mt-1 tabular-nums">${(stats.avgUptime || 0).toFixed(1)}<span class="text-lg font-normal">%</span></div>
+        </div>
+      `;
+
+      const last = document.getElementById('last-check-time');
+      last.textContent = stats.lastGlobalCheck 
+        ? `上次檢查：${formatTimeAgo(stats.lastGlobalCheck)}` 
+        : '等待首次檢查...';
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      if (window.lastStats) {
+        renderGlobalStats(window.lastStats);
+      }
+      renderGroups(currentMonitors);
+    }
+
+    // ==================== 心跳圖 ====================
+    function createHeartbeat(history) {
+      const container = document.createElement('div');
+      container.className = 'heartbeat';
+      const recent = (history || []).slice(-30);
+
+      if (recent.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'text-xs text-slate-400 px-1';
+        empty.textContent = '尚無檢查紀錄';
+        return empty;
+      }
+
+      recent.forEach(item => {
+        const d = document.createElement('div');
+        d.className = `hb-dot ${item.alive ? 'up' : 'down'}`;
+        d.title = `${new Date(item.time).toLocaleTimeString('zh-TW')} · ${item.alive ? '上線' : '離線'}${item.rtt ? ' ' + item.rtt + 'ms' : ''}`;
+        container.appendChild(d);
+      });
+      return container;
+    }
+
+    // ==================== 單一監測卡片 ====================
+    function createMonitorCard(monitor) {
+      const uptime = getUptime(monitor);
+      const isUp = monitor.status === 'up';
+      const isDown = monitor.status === 'down';
+
+      const card = document.createElement('div');
+      card.className = `monitor-card bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-3xl p-4 cursor-pointer`;
+
+      card.innerHTML = `
+        <div class="flex items-start justify-between">
+          <div class="min-w-0">
+            <div class="font-semibold text-lg leading-tight text-slate-800 dark:text-white truncate">${monitor.name}</div>
+            <div class="ip-text text-emerald-600 dark:text-emerald-400 mt-0.5">${monitor.ip}</div>
+          </div>
+          <div class="flex items-center gap-x-2">
+            <span class="status-dot ${isUp ? 'status-up' : isDown ? 'status-down' : 'status-unknown'}"></span>
+            <span class="text-sm font-semibold ${isUp ? 'text-emerald-600' : isDown ? 'text-rose-600' : 'text-slate-400'}">
+              ${isUp ? '上線' : isDown ? '離線' : '未知'}
+            </span>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-end justify-between">
+          <div>
+            <span class="text-4xl font-semibold tabular-nums text-slate-800 dark:text-white">${monitor.responseTime ?? '—'}</span>
+            <span class="text-xs text-slate-400 ml-1">ms</span>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-slate-400">${monitor.lastCheck ? formatTimeAgo(monitor.lastCheck) : '未檢查'}</div>
+            <div class="text-xs mt-0.5">
+              可用率 <span class="font-semibold text-emerald-600">${uptime.toFixed(1)}%</span>
+            </div>
+          </div>
+        </div>
+
+        ${monitor.notes ? `
+        <div class="mt-2 text-xs text-slate-500 dark:text-slate-400 italic truncate" title="${monitor.notes}">
+          📍 ${monitor.notes}
+        </div>` : ''}
+
+        <div class="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+          <div class="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+            <div>最近狀態</div>
+            <div>${monitor.totalChecks || 0} 次</div>
+          </div>
+          <div class="hb-container"></div>
+        </div>
+      `;
+
+      card.querySelector('.hb-container').appendChild(createHeartbeat(monitor.history));
+      card.onclick = () => showDetailModal(monitor);
+      return card;
+    }
+
+    function getFilteredMonitors(monitors) {
+      if (currentFilter === 'up') {
+        return monitors.filter(m => m.status === 'up');
+      }
+      if (currentFilter === 'down') {
+        return monitors.filter(m => m.status === 'down');
+      }
+      return monitors; // all
+    }
+
+    // ==================== 渲染群組（完全動態支援自訂類別） ====================
+    function renderGroups(monitors) {
+      const container = document.getElementById('groups-container');
+      container.innerHTML = '';
+
+      const filtered = getFilteredMonitors(monitors);
+
+      // 依照 groupLabel 將監測項目分組
+      const groups = {};
+      filtered.forEach(m => {
+        const key = m.groupLabel || m.group || '其他';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(m);
+      });
+
+      // 動態產生顯示順序：伺服器永遠第一，其餘照中文排序
+      const labels = Object.keys(groups);
+      labels.sort((a, b) => {
+        if (a === '伺服器') return -1;
+        if (b === '伺服器') return 1;
+        return a.localeCompare(b, 'zh-Hant');
+      });
+
+      let hasAny = false;
+
+      labels.forEach(label => {
+        if (!groups[label] || groups[label].length === 0) return;
+        hasAny = true;
+
+        const section = document.createElement('div');
+        section.innerHTML = `
+          <div class="flex items-center gap-x-2 mb-3 px-1">
+            <span class="section-title">${label}</span>
+            <span class="text-xs text-slate-400">(${groups[label].length})</span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4" id="grid-${label.replace(/\s/g, '_')}"></div>
+        `;
+
+        const grid = section.querySelector(`#grid-${label.replace(/\s/g, '_')}`);
+        groups[label].forEach(m => grid.appendChild(createMonitorCard(m)));
+        container.appendChild(section);
+      });
+
+      document.getElementById('empty-state').classList.toggle('hidden', hasAny);
+    }
+
+    // ==================== 重新整理 ====================
+    async function refreshUI(silent = false) {
+      try {
+        const res = await fetch(`${API_BASE}/monitors`);
+        const data = await res.json();
+        currentMonitors = data.monitors || [];
+        window.lastStats = data.stats || {};
+        renderGlobalStats(window.lastStats);
+        renderGroups(currentMonitors);
+      } catch (e) {
+        if (!silent) showToast('無法取得最新狀態', true);
+      }
+    }
+
+    // ==================== Modal ====================
+    function showDetailModal(monitor) {
+      currentModalId = monitor.id;
+      currentViewingMonitor = monitor;
+
+      document.getElementById('modal-name').textContent = monitor.name;
+      document.getElementById('modal-ip').textContent = monitor.ip;
+
+      const badge = document.getElementById('modal-status-badge');
+      const isUp = monitor.status === 'up';
+      badge.innerHTML = `
+        <span class="inline-flex items-center gap-x-2 px-3 py-1 rounded-2xl text-sm font-semibold 
+          ${isUp ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400' : 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-400'}">
+          <i class="fa-solid ${isUp ? 'fa-check' : 'fa-times'}"></i>
+          ${isUp ? '上線中' : '已離線'}
+        </span>`;
+
+      document.getElementById('modal-rtt').innerHTML = monitor.responseTime != null 
+        ? `${monitor.responseTime}<span class="text-base font-normal text-slate-400">ms</span>` : '—';
+      
+      document.getElementById('modal-uptime').textContent = getUptime(monitor).toFixed(1) + '%';
+      document.getElementById('modal-last').textContent = formatDateTime(monitor.lastCheck);
+
+      // Notes
+      const notesEl = document.getElementById('modal-notes');
+      if (monitor.notes && monitor.notes.trim()) {
+        notesEl.textContent = '📍 ' + monitor.notes;
+        notesEl.classList.remove('hidden');
+      } else {
+        notesEl.classList.add('hidden');
+      }
+
+      const hb = document.getElementById('modal-heartbeat');
+      hb.innerHTML = '';
+      hb.appendChild(createHeartbeat(monitor.history));
+
+      document.getElementById('modal-history-count').textContent = `共 ${(monitor.history || []).length} 筆紀錄`;
+
+      document.getElementById('detail-modal').classList.remove('hidden');
+      document.getElementById('detail-modal').classList.add('flex');
+    }
+
+    function hideDetailModal() {
+      const m = document.getElementById('detail-modal');
+      m.classList.remove('flex');
+      m.classList.add('hidden');
+      currentModalId = null;
+      currentViewingMonitor = null;
+    }
+
+    function editFromModal() {
+      // 優先使用我們記住的目前查看中的主機，避免 ID 查找問題
+      const monitorToEdit = currentViewingMonitor;
+      hideDetailModal();
+
+      if (monitorToEdit) {
+        showEditModal(monitorToEdit);
+      } else if (currentModalId) {
+        // 備援方案
+        const mon = currentMonitors.find(m => m.id === currentModalId);
+        if (mon) showEditModal(mon);
+      }
+    }
+
+    async function checkSingleFromModal() {
+      if (!currentModalId) return;
+      try {
+        const res = await fetch(`${API_BASE}/monitors/${currentModalId}/check`, { method: 'POST' });
+        const updated = await res.json();
+        showToast('檢查完成');
+        const idx = currentMonitors.findIndex(m => m.id === currentModalId);
+        if (idx > -1) currentMonitors[idx] = updated;
+        hideDetailModal();
+        await refreshUI(true);
+        const fresh = currentMonitors.find(m => m.id === currentModalId);
+        if (fresh) showDetailModal(fresh);
+      } catch {
+        showToast('檢查失敗', true);
+      }
+    }
+
+    async function deleteFromModal() {
+      if (!currentModalId || !confirm('確定要刪除此監測項目嗎？')) return;
+      await fetch(`${API_BASE}/monitors/${currentModalId}`, { method: 'DELETE' });
+      showToast('已刪除');
+      hideDetailModal();
+      await refreshUI(true);
+    }
+
+    // ==================== 新增/編輯 ====================
+    let editingId = null;
+
+    function showAddModal() {
+      editingId = null;
+      document.getElementById('form-title').textContent = '新增監測主機';
+      document.getElementById('form-submit-btn').textContent = '新增主機';
+      document.getElementById('form-ip').value = '';
+      document.getElementById('form-ip').disabled = false;
+      document.getElementById('form-name').value = '';
+      document.getElementById('form-group').value = '伺服器';
+      document.getElementById('form-notes').value = '';
+
+      // 動態產生目前已有的類別建議
+      populateGroupDatalist();
+
+      document.getElementById('form-modal').classList.remove('hidden');
+      document.getElementById('form-modal').classList.add('flex');
+    }
+
+    function showEditModal(monitor) {
+      editingId = monitor.id;
+      document.getElementById('form-title').textContent = '編輯監測主機';
+      document.getElementById('form-submit-btn').textContent = '儲存變更';
+      document.getElementById('form-ip').value = monitor.ip;
+      document.getElementById('form-ip').disabled = true;
+      document.getElementById('form-name').value = monitor.name || '';
+      document.getElementById('form-group').value = monitor.groupLabel || monitor.group || '伺服器';
+      document.getElementById('form-notes').value = monitor.notes || '';
+
+      populateGroupDatalist();
+
+      document.getElementById('form-modal').classList.remove('hidden');
+      document.getElementById('form-modal').classList.add('flex');
+    }
+
+    function hideFormModal() {
+      const m = document.getElementById('form-modal');
+      m.classList.remove('flex');
+      m.classList.add('hidden');
+      editingId = null;
+    }
+
+    // 產生目前所有已存在的類別，供 datalist 自動完成使用
+    function populateGroupDatalist() {
+      const datalist = document.getElementById('group-list');
+      if (!datalist) return;
+
+      datalist.innerHTML = '';
+
+      // 從目前 monitors 收集不重複的 groupLabel
+      const seen = new Set();
+      currentMonitors.forEach(m => {
+        const label = m.groupLabel || m.group;
+        if (label && !seen.has(label)) {
+          seen.add(label);
+          const opt = document.createElement('option');
+          opt.value = label;
+          datalist.appendChild(opt);
+        }
+      });
+
+      // 保證「伺服器」永遠存在
+      if (!seen.has('伺服器')) {
+        const opt = document.createElement('option');
+        opt.value = '伺服器';
+        datalist.appendChild(opt);
+      }
+    }
+
+    async function submitFormModal() {
+      const ip = document.getElementById('form-ip').value.trim();
+      const name = document.getElementById('form-name').value.trim();
+      let group = document.getElementById('form-group').value.trim();
+      const notes = document.getElementById('form-notes').value.trim();
+
+      if (!group) group = '伺服器';
+
+      if (!editingId && !ip) { showToast('請輸入 IP', true); return; }
+
+      const payload = { ip, name: name || ip, group, notes };
+
+      try {
+        const url = editingId ? `${API_BASE}/monitors/${editingId}` : `${API_BASE}/monitors`;
+        const method = editingId ? 'PUT' : 'POST';
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(editingId ? { name: payload.name, group, notes: payload.notes } : payload)
+        });
+        if (!res.ok) throw new Error((await res.json()).error || '失敗');
+        hideFormModal();
+        showToast(editingId ? '已更新' : '新增成功');
+        await refreshUI(true);
+      } catch (e) {
+        showToast(e.message || '操作失敗', true);
+      }
+    }
+
+    // ==================== 全部檢查 ====================
+    async function checkAllNow() {
+      try {
+        const res = await fetch(`${API_BASE}/check-all`, { method: 'POST' });
+        if (res.status === 429) { showToast('檢查中，請稍候', true); return; }
+        await res.json();
+        showToast('已完成全部檢查');
+        await refreshUI(true);
+      } catch {
+        showToast('檢查失敗', true);
+      }
+    }
+
+    // ==================== 初始化 ====================
+    function startAutoRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      refreshTimer = setInterval(() => refreshUI(true), 8000);
+    }
+
+    async function init() {
+      initTheme();
+      await refreshUI(true);
+      startAutoRefresh();
+
+      // 鍵盤快捷鍵
+      document.addEventListener('keydown', e => {
+        if (e.key === '/' && document.activeElement.tagName === 'BODY') { e.preventDefault(); showAddModal(); }
+        if ((e.key.toLowerCase() === 'r') && (e.ctrlKey || e.metaKey)) { e.preventDefault(); refreshUI(); }
+      });
+
+      console.log('%c[Monitor] Clean custom design loaded', 'color:#64748b');
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>

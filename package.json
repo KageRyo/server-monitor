@@ -1,0 +1,27 @@
+{
+  "name": "server-monitor",
+  "version": "1.0.0",
+  "description": "A lightweight, self-hosted server/NAS/device uptime monitoring tool with a clean UI. Similar to Uptime Kuma but simpler.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "uptime",
+    "monitoring",
+    "ping",
+    "self-hosted",
+    "server-monitor",
+    "nas"
+  ],
+  "author": "Chien-Hsun Chang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KageRyo/server-monitor.git"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "ping": "^0.4.4"
+  }
+}
