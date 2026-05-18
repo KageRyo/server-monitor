@@ -289,15 +289,17 @@
 
         <div>
           <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">類別</label>
-          <select id="form-group-select"
-                  class="w-full px-4 py-2.5 mb-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
-            <option value="">選擇既有類別</option>
-          </select>
-          <input id="form-group" type="text" list="group-list" placeholder="伺服器 或 自訂類別（如：會議室設備）"
-                 class="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
-          <datalist id="group-list">
-            <!-- 由 JS 動態插入現有類別 -->
-          </datalist>
+          <div class="relative">
+            <input id="form-group" type="text" placeholder="伺服器 或 自訂類別（如：會議室設備）"
+                   class="w-full px-4 py-2.5 pr-11 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
+            <button id="form-group-toggle" type="button"
+                    class="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-slate-400 hover:text-emerald-600 transition-colors"
+                    aria-label="展開既有類別">
+              <i class="fa-solid fa-chevron-down text-xs"></i>
+            </button>
+            <div id="group-suggestions"
+                 class="hidden absolute z-20 mt-2 w-full max-h-52 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-lg py-2"></div>
+          </div>
           <div class="text-xs text-slate-400 mt-1">可直接輸入新類別名稱，系統會自動建立</div>
         </div>
 
@@ -791,9 +793,7 @@
       document.getElementById('form-group').value = '伺服器';
       document.getElementById('form-notes').value = '';
 
-      // 動態產生目前已有的類別建議
-      populateGroupDatalist();
-      syncGroupSelectValue('伺服器');
+      populateGroupSuggestions();
 
       document.getElementById('form-modal').classList.remove('hidden');
       document.getElementById('form-modal').classList.add('flex');
@@ -809,8 +809,7 @@
       document.getElementById('form-group').value = monitor.groupLabel || monitor.group || '伺服器';
       document.getElementById('form-notes').value = monitor.notes || '';
 
-      populateGroupDatalist();
-      syncGroupSelectValue(document.getElementById('form-group').value);
+      populateGroupSuggestions();
 
       document.getElementById('form-modal').classList.remove('hidden');
       document.getElementById('form-modal').classList.add('flex');
@@ -823,51 +822,54 @@
       editingId = null;
     }
 
-    // 產生目前所有已存在的類別，供 datalist 自動完成使用
-    function populateGroupDatalist() {
-      const datalist = document.getElementById('group-list');
-      const select = document.getElementById('form-group-select');
-      if (!datalist || !select) return;
-
-      datalist.innerHTML = '';
-      select.innerHTML = '<option value="">選擇既有類別</option>';
-
-      // 從目前 monitors 收集不重複的 groupLabel
+    function getExistingGroups() {
       const seen = new Set();
+      const groups = [];
+
       currentMonitors.forEach(m => {
-        const label = m.groupLabel || m.group;
+        const label = (m.groupLabel || m.group || '').trim();
         if (label && !seen.has(label)) {
           seen.add(label);
-          const opt = document.createElement('option');
-          opt.value = label;
-          datalist.appendChild(opt);
-
-          const selectOpt = document.createElement('option');
-          selectOpt.value = label;
-          selectOpt.textContent = label;
-          select.appendChild(selectOpt);
+          groups.push(label);
         }
       });
 
-      // 保證「伺服器」永遠存在
-      if (!seen.has('伺服器')) {
-        const opt = document.createElement('option');
-        opt.value = '伺服器';
-        datalist.appendChild(opt);
-
-        const selectOpt = document.createElement('option');
-        selectOpt.value = '伺服器';
-        selectOpt.textContent = '伺服器';
-        select.appendChild(selectOpt);
-      }
+      if (!seen.has('伺服器')) groups.unshift('伺服器');
+      return groups;
     }
 
-    function syncGroupSelectValue(groupValue) {
-      const select = document.getElementById('form-group-select');
-      if (!select) return;
-      select.value = Array.from(select.options).some(opt => opt.value === groupValue)
-        ? groupValue
-        : '';
+    function hideGroupSuggestions() {
+      const panel = document.getElementById('group-suggestions');
+      if (panel) panel.classList.add('hidden');
+    }
+
+    function populateGroupSuggestions(filterText = '') {
+      const panel = document.getElementById('group-suggestions');
+      if (!panel) return;
+
+      const keyword = filterText.trim().toLowerCase();
+      const groups = getExistingGroups().filter(label => label.toLowerCase().includes(keyword));
+
+      panel.innerHTML = '';
+
+      if (groups.length === 0) {
+        panel.classList.add('hidden');
+        return;
+      }
+
+      groups.forEach(label => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'w-full px-4 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors';
+        btn.textContent = label;
+        btn.addEventListener('click', () => {
+          document.getElementById('form-group').value = label;
+          hideGroupSuggestions();
+        });
+        panel.appendChild(btn);
+      });
+
+      panel.classList.remove('hidden');
     }
 
     async function submitFormModal() {
@@ -924,15 +926,31 @@
       startAutoRefresh();
 
       const groupInput = document.getElementById('form-group');
-      const groupSelect = document.getElementById('form-group-select');
-
-      groupSelect.addEventListener('change', e => {
-        if (!e.target.value) return;
-        groupInput.value = e.target.value;
-      });
+      const groupToggle = document.getElementById('form-group-toggle');
+      const groupPanel = document.getElementById('group-suggestions');
 
       groupInput.addEventListener('input', e => {
-        syncGroupSelectValue(e.target.value.trim());
+        populateGroupSuggestions(e.target.value);
+      });
+
+      groupInput.addEventListener('focus', e => {
+        populateGroupSuggestions(e.target.value);
+      });
+
+      groupToggle.addEventListener('click', () => {
+        if (!groupPanel.classList.contains('hidden')) {
+          hideGroupSuggestions();
+          return;
+        }
+        populateGroupSuggestions(groupInput.value);
+        groupInput.focus();
+      });
+
+      document.addEventListener('click', e => {
+        const wrapper = groupInput.closest('.relative');
+        if (wrapper && !wrapper.contains(e.target)) {
+          hideGroupSuggestions();
+        }
       });
 
       // 鍵盤快捷鍵
