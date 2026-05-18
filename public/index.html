@@ -289,17 +289,10 @@
 
         <div>
           <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">類別</label>
-          <div class="relative">
-            <input id="form-group" type="text" placeholder="伺服器 或 自訂類別（如：會議室設備）"
-                   class="w-full px-4 py-2.5 pr-11 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
-            <button id="form-group-toggle" type="button"
-                    class="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-slate-400 hover:text-emerald-600 transition-colors"
-                    aria-label="展開既有類別">
-              <i class="fa-solid fa-chevron-down text-xs"></i>
-            </button>
-            <div id="group-suggestions"
-                 class="hidden absolute z-20 mt-2 w-full max-h-52 overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-lg py-2"></div>
-          </div>
+          <input id="form-group" type="text" placeholder="伺服器 或 自訂類別（如：會議室設備）"
+                 class="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
+          <div id="group-suggestions"
+               class="mt-2 flex flex-wrap gap-2"></div>
           <div class="text-xs text-slate-400 mt-1">可直接輸入新類別名稱，系統會自動建立</div>
         </div>
 
@@ -838,38 +831,28 @@
       return groups;
     }
 
-    function hideGroupSuggestions() {
-      const panel = document.getElementById('group-suggestions');
-      if (panel) panel.classList.add('hidden');
-    }
-
-    function populateGroupSuggestions(filterText = '') {
+    function populateGroupSuggestions() {
       const panel = document.getElementById('group-suggestions');
       if (!panel) return;
 
-      const keyword = filterText.trim().toLowerCase();
-      const groups = getExistingGroups().filter(label => label.toLowerCase().includes(keyword));
-
       panel.innerHTML = '';
+      const groups = getExistingGroups();
 
       if (groups.length === 0) {
-        panel.classList.add('hidden');
+        panel.innerHTML = '<div class="text-xs text-slate-400 px-1 py-1">目前沒有既有類別</div>';
         return;
       }
 
       groups.forEach(label => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'w-full px-4 py-2 text-left text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors';
+        btn.className = 'px-3 py-1.5 rounded-2xl text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors';
         btn.textContent = label;
         btn.addEventListener('click', () => {
           document.getElementById('form-group').value = label;
-          hideGroupSuggestions();
         });
         panel.appendChild(btn);
       });
-
-      panel.classList.remove('hidden');
     }
 
     async function submitFormModal() {
@@ -924,34 +907,6 @@
       initTheme();
       await refreshUI(true);
       startAutoRefresh();
-
-      const groupInput = document.getElementById('form-group');
-      const groupToggle = document.getElementById('form-group-toggle');
-      const groupPanel = document.getElementById('group-suggestions');
-
-      groupInput.addEventListener('input', e => {
-        populateGroupSuggestions(e.target.value);
-      });
-
-      groupInput.addEventListener('focus', e => {
-        populateGroupSuggestions(e.target.value);
-      });
-
-      groupToggle.addEventListener('click', () => {
-        if (!groupPanel.classList.contains('hidden')) {
-          hideGroupSuggestions();
-          return;
-        }
-        populateGroupSuggestions(groupInput.value);
-        groupInput.focus();
-      });
-
-      document.addEventListener('click', e => {
-        const wrapper = groupInput.closest('.relative');
-        if (wrapper && !wrapper.contains(e.target)) {
-          hideGroupSuggestions();
-        }
-      });
 
       // 鍵盤快捷鍵
       document.addEventListener('keydown', e => {
