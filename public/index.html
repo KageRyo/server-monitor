@@ -289,6 +289,10 @@
 
         <div>
           <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">類別</label>
+          <select id="form-group-select"
+                  class="w-full px-4 py-2.5 mb-2 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
+            <option value="">選擇既有類別</option>
+          </select>
           <input id="form-group" type="text" list="group-list" placeholder="伺服器 或 自訂類別（如：會議室設備）"
                  class="w-full px-4 py-2.5 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-2xl text-sm focus:outline-none focus:border-emerald-500">
           <datalist id="group-list">
@@ -789,6 +793,7 @@
 
       // 動態產生目前已有的類別建議
       populateGroupDatalist();
+      syncGroupSelectValue('伺服器');
 
       document.getElementById('form-modal').classList.remove('hidden');
       document.getElementById('form-modal').classList.add('flex');
@@ -805,6 +810,7 @@
       document.getElementById('form-notes').value = monitor.notes || '';
 
       populateGroupDatalist();
+      syncGroupSelectValue(document.getElementById('form-group').value);
 
       document.getElementById('form-modal').classList.remove('hidden');
       document.getElementById('form-modal').classList.add('flex');
@@ -820,9 +826,11 @@
     // 產生目前所有已存在的類別，供 datalist 自動完成使用
     function populateGroupDatalist() {
       const datalist = document.getElementById('group-list');
-      if (!datalist) return;
+      const select = document.getElementById('form-group-select');
+      if (!datalist || !select) return;
 
       datalist.innerHTML = '';
+      select.innerHTML = '<option value="">選擇既有類別</option>';
 
       // 從目前 monitors 收集不重複的 groupLabel
       const seen = new Set();
@@ -833,6 +841,11 @@
           const opt = document.createElement('option');
           opt.value = label;
           datalist.appendChild(opt);
+
+          const selectOpt = document.createElement('option');
+          selectOpt.value = label;
+          selectOpt.textContent = label;
+          select.appendChild(selectOpt);
         }
       });
 
@@ -841,7 +854,20 @@
         const opt = document.createElement('option');
         opt.value = '伺服器';
         datalist.appendChild(opt);
+
+        const selectOpt = document.createElement('option');
+        selectOpt.value = '伺服器';
+        selectOpt.textContent = '伺服器';
+        select.appendChild(selectOpt);
       }
+    }
+
+    function syncGroupSelectValue(groupValue) {
+      const select = document.getElementById('form-group-select');
+      if (!select) return;
+      select.value = Array.from(select.options).some(opt => opt.value === groupValue)
+        ? groupValue
+        : '';
     }
 
     async function submitFormModal() {
@@ -896,6 +922,18 @@
       initTheme();
       await refreshUI(true);
       startAutoRefresh();
+
+      const groupInput = document.getElementById('form-group');
+      const groupSelect = document.getElementById('form-group-select');
+
+      groupSelect.addEventListener('change', e => {
+        if (!e.target.value) return;
+        groupInput.value = e.target.value;
+      });
+
+      groupInput.addEventListener('input', e => {
+        syncGroupSelectValue(e.target.value.trim());
+      });
 
       // 鍵盤快捷鍵
       document.addEventListener('keydown', e => {
