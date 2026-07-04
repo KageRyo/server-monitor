@@ -76,6 +76,7 @@ pm2 startup
 
 - 所有監測目標、備註、檢查歷史都儲存在：`data/monitors.json`
 - 執行日誌位於：`logs/monitor.log`
+- 日誌會自動輪替，預設單檔最大 5MB，保留 5 份備份：`monitor.log.1` ~ `monitor.log.5`
 
 **重要**：`data/` 與 `logs/` 資料夾已被 `.gitignore` 忽略，不會上傳到 GitHub，保護你的主機 IP 與備註資訊。
 
@@ -88,6 +89,9 @@ pm2 startup
 ```env
 PORT=3000
 CHECK_INTERVAL=30000
+LOG_MAX_BYTES=5242880
+LOG_MAX_FILES=5
+LOG_TO_STDOUT=false
 ```
 
 完整範例請參考 `.env.example`。

@@ -16,7 +16,8 @@ if [ -f logs/server.pid ]; then
 fi
 
 # 啟動
-nohup node server.js >> logs/monitor.log 2>&1 &
+# server.js 會自行寫入並輪替 logs/monitor.log；這裡只覆寫保存啟動期錯誤。
+nohup node server.js > logs/startup.log 2>&1 &
 NEW_PID=$!
 echo $NEW_PID > logs/server.pid
 
@@ -29,5 +30,5 @@ if ps -p $NEW_PID > /dev/null 2>&1; then
   echo ""
   echo "   日誌位置：logs/monitor.log"
 else
-  echo "❌ 啟動失敗，請查看 logs/monitor.log"
+  echo "❌ 啟動失敗，請查看 logs/startup.log 或 logs/monitor.log"
 fi
