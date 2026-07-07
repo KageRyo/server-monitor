@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const util = require('util');
+const net = require('net');
 
 function loadEnvFile() {
   const envFile = path.join(__dirname, '.env');
@@ -157,6 +158,32 @@ function generateId(ip) {
   return ip.replace(/\./g, '-');
 }
 
+function normalizeIpv4(value) {
+  if (typeof value !== 'string') return null;
+  const clean = value.trim();
+  return net.isIP(clean) === 4 ? clean : null;
+}
+
+function dataWriteError() {
+  return {
+    error: '資料儲存失敗，請確認磁碟空間與 data/ 目錄權限後再試一次'
+  };
+}
+
+function archiveCorruptDataFile() {
+  if (!fs.existsSync(DATA_FILE)) return;
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupFile = `${DATA_FILE}.corrupt-${stamp}`;
+
+  try {
+    fs.copyFileSync(DATA_FILE, backupFile);
+    console.error(`Corrupt data file copied to ${backupFile}`);
+  } catch (e) {
+    console.error('Failed to copy corrupt data file:', e.message);
+  }
+}
+
 function loadFromFile() {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -184,6 +211,7 @@ function loadFromFile() {
     }
   } catch (e) {
     console.error('Failed to load data file:', e.message);
+    archiveCorruptDataFile();
   }
 
   // No seed data — start completely empty for open-source safety
@@ -194,26 +222,42 @@ function loadFromFile() {
 }
 
 function saveToFile() {
+  let tempFile = null;
+
   try {
     const dir = path.dirname(DATA_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
     const payload = {
       monitors,
       groupOrder,
       lastGlobalCheck,
       savedAt: new Date().toISOString()
     };
-    fs.writeFileSync(DATA_FILE, JSON.stringify(payload, null, 2), 'utf8');
+
+    tempFile = path.join(dir, `.monitors.${process.pid}.${Date.now()}.tmp`);
+    fs.writeFileSync(tempFile, JSON.stringify(payload, null, 2), 'utf8');
+    fs.renameSync(tempFile, DATA_FILE);
+    return true;
   } catch (e) {
     console.error('Failed to save data:', e.message);
+    if (tempFile && fs.existsSync(tempFile)) {
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (unlinkErr) {
+        console.error('Failed to remove incomplete data file:', unlinkErr.message);
+      }
+    }
+    return false;
   }
 }
 
 async function probe(ip) {
   try {
     const res = await ping.promise.probe(ip, {
-      timeout: 4,
-      extra: ['-c', '1', '-W', '3']
+      timeout: 3,
+      min_reply: 1,
+      numeric: true
     });
     const alive = !!res.alive;
     let rtt = null;
@@ -250,23 +294,31 @@ function updateMonitor(monitor, result) {
 }
 
 async function runAllChecks(isManual = false) {
-  if (isChecking) return;
+  if (isChecking) return false;
   isChecking = true;
 
-  console.log(`[${new Date().toISOString()}] Running checks for ${monitors.length} monitors...`);
+  try {
+    console.log(`[${new Date().toISOString()}] Running checks for ${monitors.length} monitors...`);
 
-  const tasks = monitors.map(async (m) => {
-    const result = await probe(m.ip);
-    updateMonitor(m, result);
-  });
+    const tasks = monitors.map(async (m) => {
+      const result = await probe(m.ip);
+      updateMonitor(m, result);
+    });
 
-  await Promise.all(tasks);
+    await Promise.all(tasks);
 
-  lastGlobalCheck = new Date().toISOString();
-  saveToFile();
-  isChecking = false;
+    lastGlobalCheck = new Date().toISOString();
+    const saved = saveToFile();
+    if (!saved) {
+      console.error('Checks completed but results could not be saved.');
+      return false;
+    }
 
-  console.log('Checks completed.');
+    console.log('Checks completed.');
+    return true;
+  } finally {
+    isChecking = false;
+  }
 }
 
 // 取得目前所有使用的群組（支援自訂順序）
@@ -383,15 +435,16 @@ app.get('/api/monitors', (req, res) => {
 
 // Add new monitor
 app.post('/api/monitors', (req, res) => {
-  const { ip, name, group } = req.body;
+  const { ip, name, group, notes } = req.body;
   if (!ip || typeof ip !== 'string') {
     return res.status(400).json({ error: 'IP is required' });
   }
-  // Basic IP validation
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip.trim())) {
+
+  const cleanIp = normalizeIpv4(ip);
+  if (!cleanIp) {
     return res.status(400).json({ error: 'Invalid IP format' });
   }
-  const cleanIp = ip.trim();
+
   const id = generateId(cleanIp);
 
   if (monitors.find(m => m.id === id)) {
@@ -409,11 +462,15 @@ app.post('/api/monitors', (req, res) => {
     history: [],
     totalChecks: 0,
     upChecks: 0,
-    notes: ''
+    notes: typeof notes === 'string' ? notes.trim() : ''
   };
 
   monitors.push(newMonitor);
-  saveToFile();
+  if (!saveToFile()) {
+    monitors.pop();
+    return res.status(500).json(dataWriteError());
+  }
+
   res.status(201).json(newMonitor);
 });
 
@@ -425,6 +482,12 @@ app.put('/api/monitors/:id', (req, res) => {
   const monitor = monitors.find(m => m.id === id);
   if (!monitor) return res.status(404).json({ error: 'Not found' });
 
+  const previous = {
+    name: monitor.name,
+    group: monitor.group,
+    notes: monitor.notes
+  };
+
   if (name && typeof name === 'string') monitor.name = name.trim();
   if (group && typeof group === 'string' && group.trim()) {
     monitor.group = group.trim();
@@ -433,7 +496,11 @@ app.put('/api/monitors/:id', (req, res) => {
     monitor.notes = req.body.notes.trim();
   }
 
-  saveToFile();
+  if (!saveToFile()) {
+    Object.assign(monitor, previous);
+    return res.status(500).json(dataWriteError());
+  }
+
   res.json(monitor);
 });
 
@@ -443,8 +510,12 @@ app.delete('/api/monitors/:id', (req, res) => {
   const idx = monitors.findIndex(m => m.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
 
-  monitors.splice(idx, 1);
-  saveToFile();
+  const [removed] = monitors.splice(idx, 1);
+  if (!saveToFile()) {
+    monitors.splice(idx, 0, removed);
+    return res.status(500).json(dataWriteError());
+  }
+
   res.json({ success: true });
 });
 
@@ -463,6 +534,8 @@ app.put('/api/groups/order', (req, res) => {
     return res.status(400).json({ error: 'order 必須是陣列' });
   }
 
+  const previousOrder = groupOrder.slice();
+
   // 只保留目前實際存在的群組
   const existingGroups = new Set(monitors.map(m => m.group || 'server'));
   groupOrder = order.filter(g => existingGroups.has(g));
@@ -475,7 +548,11 @@ app.put('/api/groups/order', (req, res) => {
     }
   });
 
-  saveToFile();
+  if (!saveToFile()) {
+    groupOrder = previousOrder;
+    return res.status(500).json(dataWriteError());
+  }
+
   res.json({ success: true, order: groupOrder });
 });
 
@@ -487,7 +564,9 @@ app.post('/api/monitors/:id/check', async (req, res) => {
 
   const result = await probe(monitor.ip);
   updateMonitor(monitor, result);
-  saveToFile();
+  if (!saveToFile()) {
+    return res.status(500).json(dataWriteError());
+  }
 
   const label = monitor.group === 'server' ? '伺服器' : monitor.group;
   res.json({
@@ -501,7 +580,12 @@ app.post('/api/check-all', async (req, res) => {
   if (isChecking) {
     return res.status(429).json({ error: 'Check already in progress' });
   }
-  await runAllChecks(true);
+
+  const saved = await runAllChecks(true);
+  if (!saved) {
+    return res.status(500).json(dataWriteError());
+  }
+
   res.json({
     success: true,
     stats: getStats(),
@@ -528,12 +612,20 @@ function startChecker() {
 
 // Get all non-internal IPv4 addresses for LAN access
 function getLocalIPs() {
-  const nets = os.networkInterfaces();
   const results = [];
+  let nets;
+
+  try {
+    nets = os.networkInterfaces();
+  } catch (e) {
+    console.warn('Failed to read network interfaces:', e.message);
+    return results;
+  }
+
   for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
-        results.push(net.address);
+    for (const iface of (nets[name] || [])) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        results.push(iface.address);
       }
     }
   }
